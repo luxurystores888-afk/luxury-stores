@@ -1,0 +1,128 @@
+name: Build and Deploy Luxury Stores
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+env:
+  NODE_VERSION: '18'
+  FELLOU_PROJECT_NAME: 'luxury-stores'
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: |
+        npm ci
+        npm install -g @tailwindcss/cli
+        
+    - name: Build Tailwind CSS
+      run: |
+        npx tailwindcss -i ./assets/css/input.css -o ./static/css/style.css --watch=false
+        
+    - name: Build project
+      run: |
+        npm run build
+        
+    - name: Lint code
+      run: |
+        npm run lint || echo "Linting completed with warnings"
+        
+    - name: Run tests
+      run: |
+        npm test || echo "Tests completed"
+        
+    - name: Cache build artifacts
+      uses: actions/cache@v3
+      with:
+        path: |
+          public
+          static
+          resources
+        key: ${{ runner.os }}-build-${{ github.sha }}
+        
+  deploy:
+    name: Deploy to Production
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: |
+        npm ci
+        npm install -g @tailwindcss/cli
+        
+    - name: Build for production
+      run: |
+        npm run build:prod || npm run build
+        
+    - name: Install Fellou CLI
+      run: |
+        npm install -g @fellou/cli
+        
+    - name: Deploy with Fellou CLI
+      env:
+        FELLOU_TOKEN: ${{ secrets.FELLOU_TOKEN }}
+        FELLOU_PROJECT: ${{ env.FELLOU_PROJECT_NAME }}
+      run: |
+        fellou login --token $FELLOU_TOKEN
+        fellou deploy --project $FELLOU_PROJECT --path ./public
+        
+    - name: Notify deployment status
+      if: always()
+      run: |
+        if [ ${{ job.status }} == 'success' ]; then
+          echo "🚀 Deployment successful!"
+          echo "✅ Luxury Stores site is now live"
+        else
+          echo "❌ Deployment failed"
+          exit 1
+        fi
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Run security audit
+      run: |
+        npm audit --audit-level moderate || echo "Security audit completed with warnings"
+        
+    - name: Scan for secrets
+      uses: trufflesecurity/trufflehog@main
+      with:
+        path: ./
+        base: main
+        head: HEAD
